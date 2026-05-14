@@ -1,0 +1,9 @@
+video-downloads
+
+__pycache__/
+checkpoints/
+generated_output.mp4
+train-embeddings/
+train-videos/
+venv/
+
