@@ -31,6 +31,8 @@ def parse_args():
     parser.add_argument('--cond_channels', type=int, default=32, help='Condition channels')
     parser.add_argument('--base_channels', type=int, default=64, help='Base channels')
     parser.add_argument('--latent_dim', type=int, default=256, help='Latent dimension')
+    parser.add_argument('--flow_scale', type=float, default=0.025, help='Strength of predicted motion flow')
+    parser.add_argument('--refine_noise', type=float, default=0.0125, help='Hallucination noise during training')
     parser.add_argument('--samples_per_video', type=int, default=100, help='Samples per video per epoch')
     parser.add_argument('--frame_skip', type=int, default=1, help='Frames to skip (e.g. 4)')
     parser.add_argument('--perceptual_weight', type=float, default=2.0, help='Weight for LPIPS loss')
@@ -203,7 +205,7 @@ def main():
                     active_degrade[degrade_timer <= 0] = 0
 
                     # Predict
-                    res = model(x_t_input, h_prev, e_t)
+                    res = model(x_t_input, h_prev, e_t, flow_scale=args.flow_scale, refine_noise=args.refine_noise)
                     if len(res) == 3:
                         x_pred, h_prev, debug_info = res
                     else:

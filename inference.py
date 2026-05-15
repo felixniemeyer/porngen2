@@ -48,6 +48,8 @@ def parse_args():
     parser.add_argument('--fps', type=int, default=30)
     parser.add_argument('--gain', type=float, default=1.0)
     parser.add_argument('--noise_level', type=float, default=0.02)
+    parser.add_argument('--flow_scale', type=float, default=0.025, help='Strength of predicted motion flow')
+    parser.add_argument('--refine_noise', type=float, default=0.0125, help='Hallucination noise during training')
     parser.add_argument('--stimulus', action='store_true')
     parser.add_argument('--balance_channels', action='store_true')
     parser.add_argument('--debug', action='store_true', help='Log stats to console')
@@ -136,7 +138,7 @@ def generate_video():
             frame_start = time.time()
             
             # Predict
-            res = model(x_t, h_prev, e_t)
+            res = model(x_t, h_prev, e_t, flow_scale=args.flow_scale, refine_noise=args.refine_noise)
             if len(res) == 3:
                 x_t_plus_1, h_prev, debug_info = res
             else:
