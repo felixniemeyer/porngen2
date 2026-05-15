@@ -53,8 +53,10 @@ class DynamicsCore(nn.Module):
     def forward(self, z, h_fast, h_slow):
         x = torch.cat([z, h_fast, h_slow], dim=1)
         out = self.net(x)
-        flow = out[:, :2, :, :] * 0.1
-        uncertainty = torch.sigmoid(out[:, 2:3, :, :])
+        # 4x reduction in flow strength for more subtle, realistic motion
+        flow = out[:, :2, :, :] * 0.025
+        # Sharpen the uncertainty mask to force more 'binary' choices (sharp vs generated)
+        uncertainty = torch.sigmoid(out[:, 2:3, :, :] * 2.0)
         return flow, uncertainty
 
 class SparseRefiner(nn.Module):
@@ -147,10 +149,15 @@ class LaRMS(nn.Module):
         z_t = self.encoder(x_t)
         
         flow, uncertainty = self.dynamics(z_t, h_fast, h_slow)
+        # Center the flow spatially to prevent cumulative zoom/drift
+        flow = flow - flow.mean(dim=(2, 3), keepdim=True)
+        
         z_warped = warp_latent(z_t, flow)
         
         if self.training:
-            noise = torch.randn_like(z_warped) * 0.05
+            # Inject noise where uncertain to force the refiner to hallucinate structure
+            # 4x reduction in noise strength to match the scaled-back motion
+            noise = torch.randn_like(z_warped) * 0.0125
             z_warped_noisy = z_warped + (noise * uncertainty)
         else:
             z_warped_noisy = z_warped
@@ -190,9 +197,6 @@ class LaRMS(nn.Module):
                     new_v[slices] = v_ckpt[slices]
                     migrated_sd[k] = new_v
                     salvage_count += 1
-                else:
-                    # Skip if ranks don't match (e.g. weight turned into bias)
-                    pass
         
         missing, unexpected = self.load_state_dict(migrated_sd, strict=False)
         print(f"LaRMS Optimistic Migration: Salvaged {salvage_count} layers (loaded or sliced).")
