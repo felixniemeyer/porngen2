@@ -85,15 +85,17 @@ def run_labelling_process(video_dir='./train-videos', output_dir='./train-embedd
 class WorldModelDataset(Dataset):
     """
     Loads chunks of frames and their corresponding interpolated embeddings.
+    Supports frame skipping to force learning of larger temporal dynamics.
     """
     def __init__(self, video_dir='./train-videos', embed_dir='./train-embeddings', 
-                 seq_len=16, height=32, width=64, samples_per_video=100):
+                 seq_len=16, height=64, width=128, samples_per_video=100, frame_skip=1):
         self.video_dir = video_dir
         self.embed_dir = embed_dir
         self.seq_len = seq_len
         self.height = height
         self.width = width
         self.samples_per_video = samples_per_video
+        self.frame_skip = frame_skip
         
         self.samples = []
         for meta_path in glob.glob(os.path.join(embed_dir, '*_meta.pt')):
@@ -120,22 +122,22 @@ class WorldModelDataset(Dataset):
         embeds = meta['embeddings'] # (num_embeds, e_dim)
         embeds_per_sec = meta['embeds_per_sec']
         
-        # We need seq_len + 1 frames for next-frame prediction
-        chunk_size = self.seq_len + 1
+        # Total distance in the video for a chunk with skipping
+        # E.g. seq_len=16, frame_skip=4 -> we need (16*4) + 1 frames = 65 frames total span
+        total_span = (self.seq_len * self.frame_skip) + 1
         
-        if num_frames <= chunk_size:
+        if num_frames <= total_span:
             start_frame = 0
         else:
             # Random starting frame
-            start_frame = torch.randint(0, num_frames - chunk_size, (1,)).item()
+            start_frame = torch.randint(0, num_frames - total_span, (1,)).item()
             
-        start_sec = start_frame / fps
-        
-        # Read the specific chunk using cv2
+        # Read the frames using cv2 with skipping
         cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         frames = []
-        for _ in range(chunk_size):
+        for i in range(self.seq_len + 1):
+            target_f = start_frame + (i * self.frame_skip)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target_f)
             ret, frame = cap.read()
             if not ret:
                 break
@@ -145,30 +147,29 @@ class WorldModelDataset(Dataset):
         
         if len(frames) == 0:
             # Absolute fallback: black frames
-            vframes = torch.zeros((chunk_size, self.height, self.width, 3), dtype=torch.uint8)
+            vframes = torch.zeros((self.seq_len + 1, self.height, self.width, 3), dtype=torch.uint8)
         else:
-            # Fallback if video is too short or reading failed: pad with the last frame
-            while len(frames) < chunk_size:
+            # Fallback: pad with the last frame
+            while len(frames) < self.seq_len + 1:
                 frames.append(frames[-1])
             vframes = torch.tensor(np.array(frames), dtype=torch.uint8)
             
-        vframes = vframes[:chunk_size] # Ensure exact size (chunk_size, H, W, C)
+        vframes = vframes[:self.seq_len + 1]
         
         # Convert from (T, H, W, C) to (T, C, H, W)
         vframes = vframes.permute(0, 3, 1, 2).float()
         
-        # Resize to (32, 64)
+        # Resize and Normalize
         vframes = F.resize(vframes, [self.height, self.width], antialias=True)
-        
-        # Normalize to [-1, 1]
         vframes = (vframes / 127.5) - 1.0
         
-        # Align embeddings: map each frame back to the correct embedding index
-        frame_timestamps = start_sec + torch.arange(chunk_size) / fps
+        # Align embeddings: map each sampled frame back to the correct embedding index
+        sampled_frame_indices = start_frame + torch.arange(len(vframes)) * self.frame_skip
+        frame_timestamps = sampled_frame_indices / fps
         embed_indices = (frame_timestamps * embeds_per_sec).long()
         embed_indices = torch.clamp(embed_indices, 0, embeds.shape[0] - 1)
         
-        chunk_embeds = embeds[embed_indices] # Shape: (chunk_size, e_dim)
+        chunk_embeds = embeds[embed_indices] # Shape: (len(vframes), e_dim)
         
         return vframes, chunk_embeds
 
