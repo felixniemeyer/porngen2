@@ -199,7 +199,13 @@ def main():
                     # If sudden transient, reset mode to 0 immediately
                     active_degrade[degrade_timer <= 0] = 0
 
-                    x_pred, h_prev = model(x_t_input, h_prev, e_t)
+                    # Predict
+                    res = model(x_t_input, h_prev, e_t)
+                    if len(res) == 3:
+                        x_pred, h_prev, debug_info = res
+                    else:
+                        x_pred, h_prev = res
+                        debug_info = None
                     
                     if global_step % args.sample_interval == 0 and t == vis_step_t:
                         vis_sample = (x_t_input.detach(), x_target.detach(), x_pred.detach())
