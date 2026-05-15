@@ -171,23 +171,27 @@ class LaRMS(nn.Module):
         return x_t_next, (h_fast_new, h_slow_new), debug_info
 
     def load_migrated(self, path, device):
-        """Attempts to load weights even if architecture slightly changed."""
-        checkpoint_state_dict = torch.load(path, map_location=device, weights_only=True)
-        model_state_dict = self.state_dict()
+        """Attempts to load weights even if architecture changed by slicing tensors."""
+        ckpt_sd = torch.load(path, map_location=device, weights_only=True)
+        model_sd = self.state_dict()
         
-        # Filter out keys that don't exist in the current model or have different shapes
-        migrated_state_dict = {}
-        mismatch_count = 0
-        for k, v in checkpoint_state_dict.items():
-            if k in model_state_dict:
-                if v.shape == model_state_dict[k].shape:
-                    migrated_state_dict[k] = v
+        migrated_sd = {}
+        salvage_count = 0
+        for k, v_ckpt in ckpt_sd.items():
+            if k in model_sd:
+                v_model = model_sd[k]
+                if v_ckpt.shape == v_model.shape:
+                    migrated_sd[k] = v_ckpt
+                    salvage_count += 1
                 else:
-                    mismatch_count += 1
+                    # OPTIMISTIC SLICING: Copy the overlapping region
+                    new_v = v_model.clone()
+                    slices = tuple(slice(0, min(v_ckpt.shape[i], v_model.shape[i])) for i in range(v_ckpt.ndim))
+                    new_v[slices] = v_ckpt[slices]
+                    migrated_sd[k] = new_v
+                    salvage_count += 1
         
-        missing, unexpected = self.load_state_dict(migrated_state_dict, strict=False)
-        print(f"LaRMS Migration: Loaded from {path} with strict=False.")
-        if mismatch_count > 0:
-            print(f" -> Info: {mismatch_count} layers skipped due to size mismatch (likely shifted layer indices).")
+        missing, unexpected = self.load_state_dict(migrated_sd, strict=False)
+        print(f"LaRMS Optimistic Migration: Salvaged {salvage_count} layers (loaded or sliced).")
         if missing:
-            print(f" -> Info: {len(missing)} layers initialized from scratch (new layers/mismatches).")
+            print(f" -> {len(missing)} keys still missing (brand new layers).")
