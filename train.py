@@ -98,7 +98,14 @@ def main():
     if len(dataset.samples) == 0:
         print("No videos found!"); return
 
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=args.batch_size, 
+        shuffle=True, 
+        drop_last=True,
+        num_workers=4,
+        pin_memory=True
+    )
     
     if args.model_type == 'dcn':
         model = LatentDCNWorldModel(e_dim=args.e_dim, cond_channels=args.cond_channels, 
