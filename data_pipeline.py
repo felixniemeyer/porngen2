@@ -86,12 +86,14 @@ class WorldModelDataset(Dataset):
     """
     Loads chunks of frames and their corresponding interpolated embeddings.
     """
-    def __init__(self, video_dir='./train-videos', embed_dir='./train-embeddings', seq_len=16, height=32, width=64):
+    def __init__(self, video_dir='./train-videos', embed_dir='./train-embeddings', 
+                 seq_len=16, height=32, width=64, samples_per_video=100):
         self.video_dir = video_dir
         self.embed_dir = embed_dir
         self.seq_len = seq_len
         self.height = height
         self.width = width
+        self.samples_per_video = samples_per_video
         
         self.samples = []
         for meta_path in glob.glob(os.path.join(embed_dir, '*_meta.pt')):
@@ -104,8 +106,8 @@ class WorldModelDataset(Dataset):
             print(f"Warning: No valid (video, embedding) pairs found.")
                 
     def __len__(self):
-        # Artificially expand length for the prototype so dataloader doesn't end instantly
-        return len(self.samples) * 100
+        # Sample N random chunks from each video per epoch
+        return len(self.samples) * self.samples_per_video
 
     def __getitem__(self, idx):
         # Modulo to get actual video index
@@ -162,17 +164,12 @@ class WorldModelDataset(Dataset):
         vframes = (vframes / 127.5) - 1.0
         
         # Align embeddings: map each frame back to the correct embedding index
-        # Time array for the sampled frames:
         frame_timestamps = start_sec + torch.arange(chunk_size) / fps
         embed_indices = (frame_timestamps * embeds_per_sec).long()
-        # Clamp to prevent out-of-bounds if duration calculation was slightly off
         embed_indices = torch.clamp(embed_indices, 0, embeds.shape[0] - 1)
         
         chunk_embeds = embeds[embed_indices] # Shape: (chunk_size, e_dim)
         
-        # Returns:
-        # vframes: (seq_len + 1, 3, 32, 64)
-        # chunk_embeds: (seq_len + 1, e_dim)
         return vframes, chunk_embeds
 
 if __name__ == "__main__":
