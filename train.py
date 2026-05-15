@@ -15,11 +15,13 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torchvision.mode
 
 # Import our custom modules
 from world_model import LatentDCNWorldModel
+from larms_model import LaRMS
 from data_pipeline import WorldModelDataset, run_labelling_process
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the Predictive Latent World Model")
     parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
+    parser.add_argument('--model_type', type=str, default='larms', choices=['dcn', 'larms'], help='Which model architecture to train')
     parser.add_argument('--seq_len', type=int, default=256, help='Sequence length for BPTT')
     parser.add_argument('--epochs', type=int, default=1, help='Number of epochs to train for')
     parser.add_argument('--start_epoch', type=int, default=0, help='Starting epoch number')
@@ -35,7 +37,7 @@ def parse_args():
     parser.add_argument('--degrade_prob', type=float, default=0.01, help='Probability of starting a degradation event per step')
     parser.add_argument('--sample_interval', type=int, default=50, help='Steps between visual samples')
     parser.add_argument('--show_preview', action='store_true', help='Show live preview')
-    parser.add_argument('--experiment_name', type=str, default='WorldModel_Training', help='MLflow experiment')
+    parser.add_argument('--experiment_name', type=str, default=None, help='MLflow experiment')
     parser.add_argument('--resume_from', type=str, default=None, help='Resume from checkpoint')
     return parser.parse_args()
 
@@ -97,8 +99,14 @@ def main():
         print("No videos found!"); return
 
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
-    model = LatentDCNWorldModel(e_dim=args.e_dim, cond_channels=args.cond_channels, 
-                               base_channels=args.base_channels, latent_dim=args.latent_dim).to(device)
+    
+    if args.model_type == 'dcn':
+        model = LatentDCNWorldModel(e_dim=args.e_dim, cond_channels=args.cond_channels, 
+                                   base_channels=args.base_channels, latent_dim=args.latent_dim).to(device)
+    elif args.model_type == 'larms':
+        model = LaRMS(e_dim=args.e_dim, cond_channels=args.cond_channels, latent_dim=args.latent_dim).to(device)
+    else:
+        raise ValueError(f"Unknown model type: {args.model_type}")
     
     if args.resume_from and os.path.exists(args.resume_from):
         print(f"Resuming: {args.resume_from}")
@@ -116,7 +124,18 @@ def main():
     except ImportError:
         use_perceptual = False
 
-    os.makedirs("checkpoints", exist_ok=True)
+    if args.experiment_name is None:
+        if args.resume_from:
+            parts = os.path.normpath(args.resume_from).split(os.sep)
+            if len(parts) >= 3:
+                args.experiment_name = parts[-2]
+            else:
+                args.experiment_name = "WorldModel_Training"
+        else:
+            args.experiment_name = "WorldModel_Training"
+
+    ckpt_dir = os.path.join("checkpoints", args.model_type, args.experiment_name)
+    os.makedirs(ckpt_dir, exist_ok=True)
     mlflow.set_experiment(args.experiment_name)
     with mlflow.start_run():
         mlflow.log_params(vars(args))
@@ -132,7 +151,11 @@ def main():
             for batch_idx, (video_chunk, embed_chunk) in enumerate(pbar):
                 video_chunk, embed_chunk = video_chunk.to(device), embed_chunk.to(device)
                 B = video_chunk.shape[0]
-                h_prev = torch.zeros(B, args.latent_dim, 8, 16).to(device)
+                
+                if args.model_type == 'dcn':
+                    h_prev = torch.zeros(B, args.latent_dim, 8, 16).to(device)
+                elif args.model_type == 'larms':
+                    h_prev = model.init_hidden(B, 32, 64, device)
                 
                 optimizer.zero_grad()
                 total_bptt_loss = 0.0
@@ -182,7 +205,10 @@ def main():
                     
                 total_bptt_loss.backward()
                 optimizer.step()
-                h_prev = h_prev.detach()
+                if isinstance(h_prev, tuple):
+                    h_prev = tuple(h.detach() for h in h_prev)
+                else:
+                    h_prev = h_prev.detach()
                 
                 if vis_sample is not None:
                     save_and_show_sample(*vis_sample, global_step, current_epoch, args.show_preview)
@@ -199,7 +225,8 @@ def main():
                 
             mlflow.log_metric("epoch_loss", epoch_loss / len(dataloader), step=current_epoch)
             scheduler.step()
-            torch.save(model.state_dict(), f"checkpoints/world_model_ep{current_epoch}.pt")
+            ckpt_path = os.path.join(ckpt_dir, f"world_model_ep{current_epoch}.pt")
+            torch.save(model.state_dict(), ckpt_path)
 
 if __name__ == "__main__":
     main()

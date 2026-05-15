@@ -10,10 +10,17 @@ import argparse
 import numpy as np
 import torchvision.transforms.functional as F
 from world_model import LatentDCNWorldModel
+from larms_model import LaRMS
 
-def get_latest_checkpoint(checkpoint_dir="checkpoints"):
+def get_latest_checkpoint(checkpoint_dir="checkpoints", model_type=None):
     """Finds the latest checkpoint file based on modification time."""
-    checkpoints = glob.glob(os.path.join(checkpoint_dir, "*.pt"))
+    search_path = os.path.join(checkpoint_dir, model_type, "**", "*.pt") if model_type else os.path.join(checkpoint_dir, "**", "*.pt")
+    checkpoints = glob.glob(search_path, recursive=True)
+    
+    # Fallback to old flat structure if no nested ones found
+    if not checkpoints:
+        checkpoints = glob.glob(os.path.join(checkpoint_dir, "*.pt"))
+        
     if not checkpoints:
         return None
     latest_checkpoint = max(checkpoints, key=os.path.getmtime)
@@ -44,6 +51,7 @@ def generate_noise_seed(height=32, width=64):
 def parse_args():
     parser = argparse.ArgumentParser(description="World Model Realtime Inference")
     parser.add_argument('--checkpoint', type=str, default='latest', help='Path to model checkpoint. Default: automatically finds the newest .pt file in ./checkpoints/')
+    parser.add_argument('--model_type', type=str, default='larms', choices=['dcn', 'larms'], help='Which model architecture to use')
     parser.add_argument('--seed', type=str, default='noise', help="Seed type: 'noise' (default) or path to a specific .mp4 file")
     parser.add_argument('--fps', type=int, default=30, help='Target playback frames per second')
     parser.add_argument('--gain', type=float, default=1.0, help='Scaling factor for the predicted frame')
@@ -67,7 +75,7 @@ def generate_video():
     
     # Resolve Checkpoint
     if args.checkpoint.lower() == 'latest':
-        checkpoint_path = get_latest_checkpoint()
+        checkpoint_path = get_latest_checkpoint(model_type=args.model_type)
         if checkpoint_path is None:
             print("No checkpoints found in ./checkpoints/")
             return
@@ -80,12 +88,19 @@ def generate_video():
         return
         
     # 1. Load Model
-    model = LatentDCNWorldModel(
-        e_dim=args.e_dim, 
-        cond_channels=args.cond_channels, 
-        base_channels=args.base_channels,
-        latent_dim=args.latent_dim
-    ).to(device)
+    if args.model_type == 'dcn':
+        model = LatentDCNWorldModel(
+            e_dim=args.e_dim, 
+            cond_channels=args.cond_channels, 
+            base_channels=args.base_channels,
+            latent_dim=args.latent_dim
+        ).to(device)
+    elif args.model_type == 'larms':
+        model = LaRMS(
+            e_dim=args.e_dim, 
+            cond_channels=args.cond_channels, 
+            latent_dim=args.latent_dim
+        ).to(device)
     
     model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=True))
     model.eval()
@@ -102,7 +117,10 @@ def generate_video():
         x_t = load_seed_frame(args.seed, height, width).to(device)
     
     # Initial hidden state (Zeros)
-    h_prev = torch.zeros(1, args.latent_dim, 8, 16).to(device)
+    if args.model_type == 'dcn':
+        h_prev = torch.zeros(1, args.latent_dim, 8, 16).to(device)
+    elif args.model_type == 'larms':
+        h_prev = model.init_hidden(1, height, width, device)
     
     # Interactive State
     should_reset = [False]
@@ -132,7 +150,10 @@ def generate_video():
             if should_reset[0]:
                 print("Resetting world model state...")
                 x_t = generate_noise_seed(height, width).to(device)
-                h_prev = torch.zeros(1, args.latent_dim, 8, 16).to(device)
+                if args.model_type == 'dcn':
+                    h_prev = torch.zeros(1, args.latent_dim, 8, 16).to(device)
+                elif args.model_type == 'larms':
+                    h_prev = model.init_hidden(1, height, width, device)
                 should_reset[0] = False
                 frame_count = 0
             
@@ -140,7 +161,10 @@ def generate_video():
             if should_flip[0]:
                 print("Flipping world model horizontally...")
                 x_t = torch.flip(x_t, [3])
-                h_prev = torch.flip(h_prev, [3])
+                if isinstance(h_prev, tuple):
+                    h_prev = tuple(torch.flip(h, [3]) for h in h_prev)
+                else:
+                    h_prev = torch.flip(h_prev, [3])
                 should_flip[0] = False
 
             frame_start = time.time()
