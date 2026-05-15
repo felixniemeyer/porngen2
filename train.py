@@ -117,7 +117,10 @@ def main():
     
     if args.resume_from and os.path.exists(args.resume_from):
         print(f"Resuming: {args.resume_from}")
-        model.load_state_dict(torch.load(args.resume_from, map_location=device, weights_only=True))
+        if args.model_type == 'larms':
+            model.load_migrated(args.resume_from, device)
+        else:
+            model.load_state_dict(torch.load(args.resume_from, map_location=device, weights_only=True))
             
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.lr_decay)
