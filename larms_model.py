@@ -172,10 +172,22 @@ class LaRMS(nn.Module):
 
     def load_migrated(self, path, device):
         """Attempts to load weights even if architecture slightly changed."""
-        state_dict = torch.load(path, map_location=device, weights_only=True)
-        # We load with strict=False to allow missing GroupNorm weights 
-        # and extra unused old layers.
-        missing, unexpected = self.load_state_dict(state_dict, strict=False)
-        print(f"LaRMS Migration: Loaded with strict=False.")
+        checkpoint_state_dict = torch.load(path, map_location=device, weights_only=True)
+        model_state_dict = self.state_dict()
+        
+        # Filter out keys that don't exist in the current model or have different shapes
+        migrated_state_dict = {}
+        mismatch_count = 0
+        for k, v in checkpoint_state_dict.items():
+            if k in model_state_dict:
+                if v.shape == model_state_dict[k].shape:
+                    migrated_state_dict[k] = v
+                else:
+                    mismatch_count += 1
+        
+        missing, unexpected = self.load_state_dict(migrated_state_dict, strict=False)
+        print(f"LaRMS Migration: Loaded from {path} with strict=False.")
+        if mismatch_count > 0:
+            print(f" -> Info: {mismatch_count} layers skipped due to size mismatch (likely shifted layer indices).")
         if missing:
-            print(f" -> Info: {len(missing)} layers initialized from scratch (expected for new norms/decoders).")
+            print(f" -> Info: {len(missing)} layers initialized from scratch (new layers/mismatches).")
