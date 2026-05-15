@@ -183,13 +183,16 @@ class LaRMS(nn.Module):
                 if v_ckpt.shape == v_model.shape:
                     migrated_sd[k] = v_ckpt
                     salvage_count += 1
-                else:
-                    # OPTIMISTIC SLICING: Copy the overlapping region
+                elif v_ckpt.ndim == v_model.ndim:
+                    # OPTIMISTIC SLICING: Copy the overlapping region for same-rank tensors
                     new_v = v_model.clone()
-                    slices = tuple(slice(0, min(v_ckpt.shape[i], v_model.shape[i])) for i in range(v_ckpt.ndim))
+                    slices = tuple(slice(0, min(v_ckpt.shape[i], v_model.shape[i])) for i in range(v_model.ndim))
                     new_v[slices] = v_ckpt[slices]
                     migrated_sd[k] = new_v
                     salvage_count += 1
+                else:
+                    # Skip if ranks don't match (e.g. weight turned into bias)
+                    pass
         
         missing, unexpected = self.load_state_dict(migrated_sd, strict=False)
         print(f"LaRMS Optimistic Migration: Salvaged {salvage_count} layers (loaded or sliced).")
