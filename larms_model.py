@@ -74,7 +74,7 @@ class SparseRefiner(nn.Module):
         nn.init.constant_(self.out.bias, 0)
         
     def forward(self, z_warped, z_t, uncertainty):
-        # REVERT CONTEXT DAMPING: Use full clean context for high detail preservation
+        # Using full clean context for high detail preservation
         x = torch.cat([z_warped, z_t, uncertainty], dim=1)
         e1 = self.act(self.norm1(self.enc1(x)))
         e2 = self.act(self.norm2(self.enc2(e1)))
@@ -145,6 +145,14 @@ class LaRMS(nn.Module):
         z_t = self.encoder(x_t)
         
         flow, uncertainty = self.dynamics(z_t, h_fast, h_slow, flow_scale=flow_scale)
+        
+        # ASPECT RATIO CORRECTION:
+        # Our resolution is 2:1 (W:H). To have equal motion leverage,
+        # horizontal flow (dx) must be half as strong as vertical flow (dy)
+        # in the [-1, 1] grid space.
+        flow_weight = torch.tensor([0.5, 1.0], device=flow.device).view(1, 2, 1, 1)
+        flow = flow * flow_weight
+        
         flow = flow - flow.mean(dim=(2, 3), keepdim=True) 
         
         z_warped = warp_latent(z_t, flow)

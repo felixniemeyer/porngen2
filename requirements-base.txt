@@ -1,0 +1,12 @@
+lpips
+mlflow
+opencv-python
+av
+tqdm
+scipy
+numpy
+pandas
+matplotlib
+scikit-learn
+pyyaml
+python-dotenv
