@@ -7,3 +7,7 @@ train-embeddings/
 train-videos/
 venv/
 
+mlflow.db
+mlruns/
+train_samples/
+

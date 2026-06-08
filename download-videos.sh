@@ -1,3 +1,4 @@
+PATH=$1
 mkdir video-downloads -p
 cd video-downloads
-yt-dlp --playlist-random --write-info-json 'https://www.pornhub.com/pornstar/janice-griffith' -S "height:480"
+yt-dlp --playlist-random --write-info-json "$PATH" -S "height:480"
